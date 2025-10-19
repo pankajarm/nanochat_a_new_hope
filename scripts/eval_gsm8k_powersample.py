@@ -76,7 +76,7 @@ def evaluate_gsm8k(
         f"Power-sampling GSM8K accuracy: {100.0 * final_accuracy:.2f}% "
         f"({local_passed}/{local_total})"
     )
-    return final_accuracy, local_passed, local_total
+    return final_accuracy
 
 
 def main() -> None:
@@ -119,7 +119,7 @@ def main() -> None:
     task = GSM8K(subset=args.subset, split=args.split)
 
     with autocast_ctx:
-        accuracy, passed, total = evaluate_gsm8k(
+        accuracy = evaluate_gsm8k(
             engine,
             tokenizer,
             task,
@@ -136,35 +136,6 @@ def main() -> None:
 
     if rank == 0:
         print0(f"Final accuracy: {accuracy * 100:.2f}%")
-
-        from nanochat.report import get_report
-
-        get_report().log(
-            section="Power sampling evaluation",
-            data=[
-                {
-                    "source": args.source,
-                    "model_tag": args.model_tag or "default",
-                    "step": args.step or "latest",
-                    "alpha": args.alpha,
-                    "num_steps": args.num_steps,
-                    "temperature": args.temperature,
-                    "top_k": args.top_k,
-                    "max_new_tokens": args.max_new_tokens,
-                    "seed": args.seed,
-                    "tool_timeout": args.tool_timeout,
-                    "tool_max_output_tokens": args.tool_max_output_tokens,
-                    "max_examples": args.max_examples or "all",
-                    "subset": args.subset,
-                    "split": args.split,
-                },
-                {
-                    "GSM8K": accuracy,
-                    "passed": passed,
-                    "total": total,
-                },
-            ],
-        )
 
     compute_cleanup()
 
