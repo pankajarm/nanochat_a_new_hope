@@ -162,10 +162,19 @@ Generated: {timestamp}
 
     # bloat metrics: package all of the source code and assess its weight
     packaged = run_command('files-to-prompt . -e py -e md -e rs -e html -e toml -e sh --ignore "*target*" --cxml')
-    num_chars = len(packaged)
-    num_lines = len(packaged.split('\n'))
-    num_files = len([x for x in packaged.split('\n') if x.startswith('<source>')])
-    num_tokens = num_chars // 4 # assume approximately 4 chars per token
+    if packaged:
+        num_chars = len(packaged)
+        num_lines = len(packaged.split('\n'))
+        num_files = len([x for x in packaged.split('\n') if x.startswith('<source>')])
+        num_tokens = num_chars // 4 # assume approximately 4 chars per token
+        bloat_note = ""
+    else:
+        # files-to-prompt command not available, use fallback values
+        num_chars = 0
+        num_lines = 0
+        num_files = 0
+        num_tokens = 0
+        bloat_note = " (files-to-prompt not available)"
 
     # count dependencies via uv.lock
     uv_lock_lines = 0
@@ -174,7 +183,7 @@ Generated: {timestamp}
             uv_lock_lines = len(f.readlines())
 
     header += f"""
-### Bloat
+### Bloat{bloat_note}
 - Characters: {num_chars:,}
 - Lines: {num_lines:,}
 - Files: {num_files:,}
