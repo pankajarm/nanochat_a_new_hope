@@ -83,8 +83,6 @@ wait $DATASET_DOWNLOAD_PID
 
 # Performance settings
 POWERSAMPLE_NUM_GPUS=${POWERSAMPLE_NUM_GPUS:-8}           # Number of GPUs to use
-POWERSAMPLE_BATCH_SIZE=${POWERSAMPLE_BATCH_SIZE:-4}       # Batch size per GPU
-POWERSAMPLE_USE_OPTIMIZED=${POWERSAMPLE_USE_OPTIMIZED:-1} # Use optimized version
 
 # Algorithm settings
 POWERSAMPLE_SOURCE=${POWERSAMPLE_SOURCE:-sft}
@@ -103,11 +101,10 @@ POWERSAMPLE_SPLIT=${POWERSAMPLE_SPLIT:-test}
 # Print configuration
 echo "Power Sampling Configuration:"
 echo "  GPUs: $POWERSAMPLE_NUM_GPUS"
-echo "  Batch size per GPU: $POWERSAMPLE_BATCH_SIZE"
-echo "  Total parallel chains: $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE))"
 echo "  MCMC steps: $POWERSAMPLE_STEPS"
+echo "  Max new tokens: $POWERSAMPLE_MAX_NEW"
+echo "  Temperature: $POWERSAMPLE_TEMPERATURE"
 echo "  Max examples: ${POWERSAMPLE_MAX_EXAMPLES:-all}"
-echo "  Use optimized: $POWERSAMPLE_USE_OPTIMIZED"
 echo ""
 
 POWERSAMPLE_ARGS=(
