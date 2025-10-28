@@ -82,14 +82,14 @@ fi
 # Power-sampling GSM8K evaluation
 
 # Check for environment variables that might override our full evaluation
-if [ -n "${POWERSAMPLE_MAX_EXAMPLES}" ]; then
+if [ -n "${POWERSAMPLE_MAX_EXAMPLES:-}" ]; then
     echo "⚠️  WARNING: POWERSAMPLE_MAX_EXAMPLES is set to '${POWERSAMPLE_MAX_EXAMPLES}' in environment!"
     echo "   This script is designed to run the FULL 1,319 problem evaluation."
     echo "   Unsetting this variable to ensure full dataset evaluation..."
     unset POWERSAMPLE_MAX_EXAMPLES
 fi
 
-if [ "${POWERSAMPLE_STEPS}" != "" ] && [ "${POWERSAMPLE_STEPS}" -lt 10 ]; then
+if [ -n "${POWERSAMPLE_STEPS:-}" ] && [ "${POWERSAMPLE_STEPS}" -lt 10 ]; then
     echo "⚠️  WARNING: POWERSAMPLE_STEPS is set to '${POWERSAMPLE_STEPS}' in environment!"
     echo "   Power sampling requires 10 MCMC steps to work properly."
     echo "   Unsetting to use the correct value of 10..."
