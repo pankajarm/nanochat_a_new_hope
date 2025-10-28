@@ -98,7 +98,7 @@ fi
 
 # Performance settings - OPTIMIZED FOR FULL RUN
 POWERSAMPLE_NUM_GPUS=${POWERSAMPLE_NUM_GPUS:-8}           # All 8 GPUs
-POWERSAMPLE_BATCH_SIZE=${POWERSAMPLE_BATCH_SIZE:-15}      # 15 problems per GPU = ~75GB memory (93% utilization!)
+POWERSAMPLE_BATCH_SIZE=${POWERSAMPLE_BATCH_SIZE:-22}      # 22 problems per GPU = ~78GB memory (97% utilization!)
 POWERSAMPLE_USE_BATCHED=${POWERSAMPLE_USE_BATCHED:-1}     # Always use batched for speed
 
 # Algorithm settings - FULL EVALUATION
@@ -123,7 +123,7 @@ echo "🚀 Power Sampling Configuration - FULL GSM8K EVALUATION"
 echo "============================================================"
 echo "Performance:"
 echo "  GPUs: $POWERSAMPLE_NUM_GPUS"
-echo "  Batch size per GPU: $POWERSAMPLE_BATCH_SIZE (using ~75GB/80GB per GPU)"
+echo "  Batch size per GPU: $POWERSAMPLE_BATCH_SIZE (targeting ~75GB/80GB per GPU)"
 echo "  Total parallel processing: $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE)) problems simultaneously!"
 echo ""
 echo "Algorithm:"
