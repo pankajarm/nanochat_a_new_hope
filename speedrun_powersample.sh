@@ -14,14 +14,14 @@ mkdir -p "$NANOCHAT_BASE_DIR"
 # -----------------------------------------------------------------------------
 # Python environment setup (via uv like the original speedrun script)
 
-# command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-# [ -d ".venv" ] || uv venv
-# # Force reinstall with updated dependencies
-# uv sync --refresh --reinstall --extra gpu
-# source .venv/bin/activate
-# # Explicitly install critical missing dependencies if not present
-# python -c "import pyarrow" 2>/dev/null || uv pip install pyarrow
-# python -c "import jinja2" 2>/dev/null || uv pip install jinja2
+command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+[ -d ".venv" ] || uv venv
+# Force reinstall with updated dependencies
+uv sync --refresh --reinstall --extra gpu
+source .venv/bin/activate
+# Explicitly install critical missing dependencies if not present
+python -c "import pyarrow" 2>/dev/null || uv pip install pyarrow
+python -c "import jinja2" 2>/dev/null || uv pip install jinja2
 
 # -----------------------------------------------------------------------------
 # Optional wandb logging
