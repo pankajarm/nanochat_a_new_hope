@@ -139,7 +139,7 @@ fi
 # Final consolidated report
 
 python -m nanochat.report generate
-cp "$NANOCHAT_BASE_DIR/report.md" ./report_powersample.md
+cp "$NANOCHAT_BASE_DIR/report/report.md" ./report_powersample.md
 
 # Optional: launch the chat web UI against the latest checkpoint
 # python -m scripts.chat_web

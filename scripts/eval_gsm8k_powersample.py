@@ -9,6 +9,7 @@ import torch.distributed as dist
 from nanochat.common import compute_cleanup, compute_init, get_dist_info, print0
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
+from nanochat.report import get_report
 from tasks.gsm8k import GSM8K
 
 
@@ -136,6 +137,17 @@ def main() -> None:
 
     if rank == 0:
         print0(f"Final accuracy: {accuracy * 100:.2f}%")
+        
+        # Log to report
+        report = get_report()
+        report.log("Power Sampling Evaluation", [
+            {"GSM8K": f"{accuracy:.4f}"},
+            {"alpha": args.alpha},
+            {"num_steps": args.num_steps},
+            {"temperature": args.temperature},
+            {"top_k": args.top_k},
+            {"seed": args.seed},
+        ])
 
     compute_cleanup()
 
