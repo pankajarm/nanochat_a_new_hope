@@ -14,14 +14,14 @@ mkdir -p "$NANOCHAT_BASE_DIR"
 # -----------------------------------------------------------------------------
 # Python environment setup (via uv like the original speedrun script)
 
-command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-[ -d ".venv" ] || uv venv
-# Force reinstall with updated dependencies
-uv sync --refresh --reinstall --extra gpu
-source .venv/bin/activate
-# Explicitly install critical missing dependencies if not present
-python -c "import pyarrow" 2>/dev/null || uv pip install pyarrow
-python -c "import jinja2" 2>/dev/null || uv pip install jinja2
+# command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+# [ -d ".venv" ] || uv venv
+# # Force reinstall with updated dependencies
+# uv sync --refresh --reinstall --extra gpu
+# source .venv/bin/activate
+# # Explicitly install critical missing dependencies if not present
+# python -c "import pyarrow" 2>/dev/null || uv pip install pyarrow
+# python -c "import jinja2" 2>/dev/null || uv pip install jinja2
 
 # -----------------------------------------------------------------------------
 # Optional wandb logging
@@ -38,26 +38,26 @@ fi
 # -----------------------------------------------------------------------------
 # Tokenizer + dataset bootstrap
 
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+# curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+# source "$HOME/.cargo/env"
+# uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 
-python -m nanochat.dataset -n 8
-python -m nanochat.dataset -n 240 &
-DATASET_DOWNLOAD_PID=$!
-python -m scripts.tok_train --max_chars=2000000000
-python -m scripts.tok_eval
+# python -m nanochat.dataset -n 8
+# python -m nanochat.dataset -n 240 &
+# DATASET_DOWNLOAD_PID=$!
+# python -m scripts.tok_train --max_chars=2000000000
+# python -m scripts.tok_eval
 
-EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
-if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
-    curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
-    unzip -q eval_bundle.zip
-    rm eval_bundle.zip
-    mv eval_bundle "$NANOCHAT_BASE_DIR"
-fi
+# EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
+# if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
+#     curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
+#     unzip -q eval_bundle.zip
+#     rm eval_bundle.zip
+#     mv eval_bundle "$NANOCHAT_BASE_DIR"
+# fi
 
-echo "Waiting for dataset download to complete..."
-wait $DATASET_DOWNLOAD_PID
+# echo "Waiting for dataset download to complete..."
+# wait $DATASET_DOWNLOAD_PID
 
 # -----------------------------------------------------------------------------
 # Base pretraining + evaluations
