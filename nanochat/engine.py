@@ -547,7 +547,7 @@ class Engine:
                 accept = True
             else:
                 accept_prob = math.exp(log_accept_ratio)
-                accept = torch.rand(1, generator=rng).item() < accept_prob
+                accept = torch.rand(1, device=device, generator=rng).item() < accept_prob
 
             history.append(
                 {
