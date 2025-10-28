@@ -81,6 +81,12 @@ fi
 # -----------------------------------------------------------------------------
 # Power-sampling GSM8K evaluation
 
+# Performance settings
+POWERSAMPLE_NUM_GPUS=${POWERSAMPLE_NUM_GPUS:-8}           # Number of GPUs to use
+POWERSAMPLE_BATCH_SIZE=${POWERSAMPLE_BATCH_SIZE:-4}       # Batch size per GPU
+POWERSAMPLE_USE_OPTIMIZED=${POWERSAMPLE_USE_OPTIMIZED:-1} # Use optimized version
+
+# Algorithm settings
 POWERSAMPLE_SOURCE=${POWERSAMPLE_SOURCE:-sft}
 POWERSAMPLE_ALPHA=${POWERSAMPLE_ALPHA:-4.0}
 POWERSAMPLE_STEPS=${POWERSAMPLE_STEPS:-10}
@@ -93,6 +99,16 @@ POWERSAMPLE_TOOL_MAX_OUT=${POWERSAMPLE_TOOL_MAX_OUT:-128}
 POWERSAMPLE_MAX_EXAMPLES=${POWERSAMPLE_MAX_EXAMPLES:-}
 POWERSAMPLE_SUBSET=${POWERSAMPLE_SUBSET:-main}
 POWERSAMPLE_SPLIT=${POWERSAMPLE_SPLIT:-test}
+
+# Print configuration
+echo "Power Sampling Configuration:"
+echo "  GPUs: $POWERSAMPLE_NUM_GPUS"
+echo "  Batch size per GPU: $POWERSAMPLE_BATCH_SIZE"
+echo "  Total parallel chains: $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE))"
+echo "  MCMC steps: $POWERSAMPLE_STEPS"
+echo "  Max examples: ${POWERSAMPLE_MAX_EXAMPLES:-all}"
+echo "  Use optimized: $POWERSAMPLE_USE_OPTIMIZED"
+echo ""
 
 POWERSAMPLE_ARGS=(
     --source "$POWERSAMPLE_SOURCE"
@@ -112,7 +128,23 @@ if [ -n "$POWERSAMPLE_MAX_EXAMPLES" ]; then
     POWERSAMPLE_ARGS+=(--max-examples "$POWERSAMPLE_MAX_EXAMPLES")
 fi
 
-python -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
+# Choose which version to run
+if [ "$POWERSAMPLE_USE_OPTIMIZED" -eq 1 ]; then
+    echo "Running optimized power sampling with batching..."
+    POWERSAMPLE_ARGS+=(--batch-size "$POWERSAMPLE_BATCH_SIZE")
+    if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
+        torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample_optimized "${POWERSAMPLE_ARGS[@]}"
+    else
+        python -m scripts.eval_gsm8k_powersample_optimized "${POWERSAMPLE_ARGS[@]}"
+    fi
+else
+    echo "Running standard power sampling..."
+    if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
+        torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
+    else
+        python -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
+    fi
+fi
 
 # -----------------------------------------------------------------------------
 # Final consolidated report
