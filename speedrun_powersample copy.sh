@@ -7,7 +7,7 @@ set -euo pipefail
 # It follows the same stages as the standard run and finishes by invoking the
 # new eval_gsm8k_powersample.py entrypoint.
 
-export OMP_NUM_THREADS=2
+export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p "$NANOCHAT_BASE_DIR"
 
@@ -33,7 +33,7 @@ fi
 # -----------------------------------------------------------------------------
 # Report scaffolding
 
-# python -m nanochat.report reset
+python -m nanochat.report reset
 
 # -----------------------------------------------------------------------------
 # Tokenizer + dataset bootstrap
@@ -62,21 +62,21 @@ wait $DATASET_DOWNLOAD_PID
 # -----------------------------------------------------------------------------
 # Base pretraining + evaluations
 
-# torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
-# torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
-# torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
+torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
 
 # -----------------------------------------------------------------------------
 # Midtraining (teaches tool usage) + evals
 
-# torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --run=$WANDB_RUN
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i mid
+torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised finetuning + evals
 
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 
 # -----------------------------------------------------------------------------
 # Power-sampling GSM8K evaluation
