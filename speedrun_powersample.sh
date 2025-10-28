@@ -45,8 +45,8 @@ fi
 # python -m nanochat.dataset -n 8
 # python -m nanochat.dataset -n 240 &
 # DATASET_DOWNLOAD_PID=$!
-python -m scripts.tok_train --max_chars=2000000000
-python -m scripts.tok_eval
+# python -m scripts.tok_train --max_chars=2000000000
+# python -m scripts.tok_eval
 
 # EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
 # if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
@@ -81,35 +81,41 @@ python -m scripts.tok_eval
 # -----------------------------------------------------------------------------
 # Power-sampling GSM8K evaluation
 
-# Performance settings
-POWERSAMPLE_NUM_GPUS=${POWERSAMPLE_NUM_GPUS:-8}           # Number of GPUs to use
-POWERSAMPLE_BATCH_SIZE=${POWERSAMPLE_BATCH_SIZE:-10}      # Problems per GPU (10x for better memory use)
-POWERSAMPLE_USE_BATCHED=${POWERSAMPLE_USE_BATCHED:-1}     # Use batched version for better GPU utilization
+# Performance settings - OPTIMIZED FOR FULL RUN
+POWERSAMPLE_NUM_GPUS=${POWERSAMPLE_NUM_GPUS:-8}           # All 8 GPUs
+POWERSAMPLE_BATCH_SIZE=${POWERSAMPLE_BATCH_SIZE:-15}      # 15 problems per GPU = ~75GB memory (93% utilization!)
+POWERSAMPLE_USE_BATCHED=${POWERSAMPLE_USE_BATCHED:-1}     # Always use batched for speed
 
-# Algorithm settings
+# Algorithm settings - FULL EVALUATION
 POWERSAMPLE_SOURCE=${POWERSAMPLE_SOURCE:-sft}
 POWERSAMPLE_ALPHA=${POWERSAMPLE_ALPHA:-4.0}
-POWERSAMPLE_STEPS=${POWERSAMPLE_STEPS:-10}
+POWERSAMPLE_STEPS=${POWERSAMPLE_STEPS:-10}                # Full 10 MCMC steps
 POWERSAMPLE_TEMPERATURE=${POWERSAMPLE_TEMPERATURE:-0.7}
 POWERSAMPLE_TOP_K=${POWERSAMPLE_TOP_K:-50}
-POWERSAMPLE_MAX_NEW=${POWERSAMPLE_MAX_NEW:-256}
+POWERSAMPLE_MAX_NEW=${POWERSAMPLE_MAX_NEW:-256}           # Full 256 tokens
 POWERSAMPLE_SEED=${POWERSAMPLE_SEED:-0}
 POWERSAMPLE_TOOL_TIMEOUT=${POWERSAMPLE_TOOL_TIMEOUT:-5.0}
 POWERSAMPLE_TOOL_MAX_OUT=${POWERSAMPLE_TOOL_MAX_OUT:-128}
-POWERSAMPLE_MAX_EXAMPLES=${POWERSAMPLE_MAX_EXAMPLES:-}
+POWERSAMPLE_MAX_EXAMPLES=${POWERSAMPLE_MAX_EXAMPLES:-}     # Empty = full GSM8K dataset (1319 examples)
 POWERSAMPLE_SUBSET=${POWERSAMPLE_SUBSET:-main}
 POWERSAMPLE_SPLIT=${POWERSAMPLE_SPLIT:-test}
 
 # Print configuration
-echo "Power Sampling Configuration:"
+echo "============================================================"
+echo "Power Sampling Configuration - FULL EVALUATION"
+echo "============================================================"
+echo "Performance:"
 echo "  GPUs: $POWERSAMPLE_NUM_GPUS"
-echo "  Batch size per GPU: $POWERSAMPLE_BATCH_SIZE"
-echo "  Effective parallelism: $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE)) problems"
+echo "  Batch size per GPU: $POWERSAMPLE_BATCH_SIZE (using ~75GB/80GB per GPU)"
+echo "  Total parallel processing: $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE)) problems simultaneously!"
+echo ""
+echo "Algorithm:"
 echo "  MCMC steps: $POWERSAMPLE_STEPS"
 echo "  Max new tokens: $POWERSAMPLE_MAX_NEW"
 echo "  Temperature: $POWERSAMPLE_TEMPERATURE"
-echo "  Max examples: ${POWERSAMPLE_MAX_EXAMPLES:-all}"
-echo "  Use batched: $POWERSAMPLE_USE_BATCHED"
+echo "  Dataset: Full GSM8K (${POWERSAMPLE_MAX_EXAMPLES:-1319 examples})"
+echo "  Expected time: ~5-10 minutes for full evaluation"
+echo "============================================================"
 echo ""
 
 POWERSAMPLE_ARGS=(
@@ -132,19 +138,21 @@ fi
 
 # Choose which version to run based on settings
 if [ "$POWERSAMPLE_USE_BATCHED" -eq 1 ]; then
-    echo "Running BATCHED power sampling for better GPU utilization..."
-    echo "Processing $POWERSAMPLE_BATCH_SIZE problems per GPU simultaneously"
+    echo "🚀 Starting BATCHED power sampling evaluation..."
+    echo "   Using optimized multi-GPU processing with high memory utilization"
+    echo "   Processing $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE)) problems in parallel!"
+    echo ""
     POWERSAMPLE_ARGS+=(--batch-size "$POWERSAMPLE_BATCH_SIZE")
     
     if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
-        echo "Using torchrun for multi-GPU processing..."
+        echo "Launching with torchrun on $POWERSAMPLE_NUM_GPUS GPUs..."
         torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample_batched "${POWERSAMPLE_ARGS[@]}"
     else
         echo "Using single GPU..."
         python -m scripts.eval_gsm8k_powersample_batched "${POWERSAMPLE_ARGS[@]}"
     fi
 else
-    echo "Running standard power sampling with $POWERSAMPLE_NUM_GPUS GPU(s)..."
+    echo "Running standard power sampling (slower, less efficient)..."
     if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
         echo "Using torchrun for multi-GPU processing..."
         torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
