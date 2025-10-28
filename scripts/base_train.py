@@ -65,6 +65,7 @@ config_keys = [k for k,v in globals().items() if not k.startswith('_') and isins
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
+print0(f"Finished Pre Compute!!!")
 
 # Compute init
 device_type = autodetect_device_type() if device_type == "" else device_type
@@ -74,9 +75,13 @@ autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
+print0(f"Finished Compute INIT!!!")
+
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
+
+print0(f"Finished wandb config!!!")
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
 tokenizer = get_tokenizer()
