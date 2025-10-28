@@ -14,14 +14,14 @@ mkdir -p "$NANOCHAT_BASE_DIR"
 # -----------------------------------------------------------------------------
 # Python environment setup (via uv like the original speedrun script)
 
-command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-[ -d ".venv" ] || uv venv
-# Force reinstall with updated dependencies
-uv sync --refresh --reinstall --extra gpu
-source .venv/bin/activate
-# Explicitly install critical missing dependencies if not present
-python -c "import pyarrow" 2>/dev/null || uv pip install pyarrow
-python -c "import jinja2" 2>/dev/null || uv pip install jinja2
+# command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+# [ -d ".venv" ] || uv venv
+# # Force reinstall with updated dependencies
+# uv sync --refresh --reinstall --extra gpu
+# source .venv/bin/activate
+# # Explicitly install critical missing dependencies if not present
+# python -c "import pyarrow" 2>/dev/null || uv pip install pyarrow
+# python -c "import jinja2" 2>/dev/null || uv pip install jinja2
 
 # -----------------------------------------------------------------------------
 # Optional wandb logging
@@ -38,26 +38,26 @@ fi
 # -----------------------------------------------------------------------------
 # Tokenizer + dataset bootstrap
 
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+# curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+# source "$HOME/.cargo/env"
+# uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 
-python -m nanochat.dataset -n 8
-python -m nanochat.dataset -n 240 &
-DATASET_DOWNLOAD_PID=$!
+# python -m nanochat.dataset -n 8
+# python -m nanochat.dataset -n 240 &
+# DATASET_DOWNLOAD_PID=$!
 python -m scripts.tok_train --max_chars=2000000000
 python -m scripts.tok_eval
 
-EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
-if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
-    curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
-    unzip -q eval_bundle.zip
-    rm eval_bundle.zip
-    mv eval_bundle "$NANOCHAT_BASE_DIR"
-fi
+# EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
+# if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
+#     curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
+#     unzip -q eval_bundle.zip
+#     rm eval_bundle.zip
+#     mv eval_bundle "$NANOCHAT_BASE_DIR"
+# fi
 
-echo "Waiting for dataset download to complete..."
-wait $DATASET_DOWNLOAD_PID
+# echo "Waiting for dataset download to complete..."
+# wait $DATASET_DOWNLOAD_PID
 
 # -----------------------------------------------------------------------------
 # Base pretraining + evaluations
@@ -83,6 +83,8 @@ wait $DATASET_DOWNLOAD_PID
 
 # Performance settings
 POWERSAMPLE_NUM_GPUS=${POWERSAMPLE_NUM_GPUS:-8}           # Number of GPUs to use
+POWERSAMPLE_BATCH_SIZE=${POWERSAMPLE_BATCH_SIZE:-10}      # Problems per GPU (10x for better memory use)
+POWERSAMPLE_USE_BATCHED=${POWERSAMPLE_USE_BATCHED:-1}     # Use batched version for better GPU utilization
 
 # Algorithm settings
 POWERSAMPLE_SOURCE=${POWERSAMPLE_SOURCE:-sft}
@@ -101,10 +103,13 @@ POWERSAMPLE_SPLIT=${POWERSAMPLE_SPLIT:-test}
 # Print configuration
 echo "Power Sampling Configuration:"
 echo "  GPUs: $POWERSAMPLE_NUM_GPUS"
+echo "  Batch size per GPU: $POWERSAMPLE_BATCH_SIZE"
+echo "  Effective parallelism: $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE)) problems"
 echo "  MCMC steps: $POWERSAMPLE_STEPS"
 echo "  Max new tokens: $POWERSAMPLE_MAX_NEW"
 echo "  Temperature: $POWERSAMPLE_TEMPERATURE"
 echo "  Max examples: ${POWERSAMPLE_MAX_EXAMPLES:-all}"
+echo "  Use batched: $POWERSAMPLE_USE_BATCHED"
 echo ""
 
 POWERSAMPLE_ARGS=(
@@ -125,14 +130,28 @@ if [ -n "$POWERSAMPLE_MAX_EXAMPLES" ]; then
     POWERSAMPLE_ARGS+=(--max-examples "$POWERSAMPLE_MAX_EXAMPLES")
 fi
 
-# Use the original script with torchrun for multi-GPU
-echo "Running power sampling with $POWERSAMPLE_NUM_GPUS GPU(s)..."
-if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
-    echo "Using torchrun for multi-GPU processing..."
-    torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
+# Choose which version to run based on settings
+if [ "$POWERSAMPLE_USE_BATCHED" -eq 1 ]; then
+    echo "Running BATCHED power sampling for better GPU utilization..."
+    echo "Processing $POWERSAMPLE_BATCH_SIZE problems per GPU simultaneously"
+    POWERSAMPLE_ARGS+=(--batch-size "$POWERSAMPLE_BATCH_SIZE")
+    
+    if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
+        echo "Using torchrun for multi-GPU processing..."
+        torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample_batched "${POWERSAMPLE_ARGS[@]}"
+    else
+        echo "Using single GPU..."
+        python -m scripts.eval_gsm8k_powersample_batched "${POWERSAMPLE_ARGS[@]}"
+    fi
 else
-    echo "Using single GPU..."
-    python -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
+    echo "Running standard power sampling with $POWERSAMPLE_NUM_GPUS GPU(s)..."
+    if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
+        echo "Using torchrun for multi-GPU processing..."
+        torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
+    else
+        echo "Using single GPU..."
+        python -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
+    fi
 fi
 
 # -----------------------------------------------------------------------------
