@@ -81,6 +81,21 @@ fi
 # -----------------------------------------------------------------------------
 # Power-sampling GSM8K evaluation
 
+# Check for environment variables that might override our full evaluation
+if [ -n "${POWERSAMPLE_MAX_EXAMPLES}" ]; then
+    echo "⚠️  WARNING: POWERSAMPLE_MAX_EXAMPLES is set to '${POWERSAMPLE_MAX_EXAMPLES}' in environment!"
+    echo "   This script is designed to run the FULL 1,319 problem evaluation."
+    echo "   Unsetting this variable to ensure full dataset evaluation..."
+    unset POWERSAMPLE_MAX_EXAMPLES
+fi
+
+if [ "${POWERSAMPLE_STEPS}" != "" ] && [ "${POWERSAMPLE_STEPS}" -lt 10 ]; then
+    echo "⚠️  WARNING: POWERSAMPLE_STEPS is set to '${POWERSAMPLE_STEPS}' in environment!"
+    echo "   Power sampling requires 10 MCMC steps to work properly."
+    echo "   Unsetting to use the correct value of 10..."
+    unset POWERSAMPLE_STEPS
+fi
+
 # Performance settings - OPTIMIZED FOR FULL RUN
 POWERSAMPLE_NUM_GPUS=${POWERSAMPLE_NUM_GPUS:-8}           # All 8 GPUs
 POWERSAMPLE_BATCH_SIZE=${POWERSAMPLE_BATCH_SIZE:-15}      # 15 problems per GPU = ~75GB memory (93% utilization!)
@@ -96,13 +111,15 @@ POWERSAMPLE_MAX_NEW=${POWERSAMPLE_MAX_NEW:-256}           # Full 256 tokens
 POWERSAMPLE_SEED=${POWERSAMPLE_SEED:-0}
 POWERSAMPLE_TOOL_TIMEOUT=${POWERSAMPLE_TOOL_TIMEOUT:-5.0}
 POWERSAMPLE_TOOL_MAX_OUT=${POWERSAMPLE_TOOL_MAX_OUT:-128}
-POWERSAMPLE_MAX_EXAMPLES=${POWERSAMPLE_MAX_EXAMPLES:-}     # Empty = full GSM8K dataset (1319 examples)
+# IMPORTANT: We explicitly DON'T set max_examples to ensure we ALWAYS use the full 1,319 problems
+# If you want to test with fewer, create a separate test script
+POWERSAMPLE_MAX_EXAMPLES=                                  # Empty = full GSM8K dataset (1319 examples)
 POWERSAMPLE_SUBSET=${POWERSAMPLE_SUBSET:-main}
 POWERSAMPLE_SPLIT=${POWERSAMPLE_SPLIT:-test}
 
 # Print configuration
 echo "============================================================"
-echo "Power Sampling Configuration - FULL EVALUATION"
+echo "🚀 Power Sampling Configuration - FULL GSM8K EVALUATION"
 echo "============================================================"
 echo "Performance:"
 echo "  GPUs: $POWERSAMPLE_NUM_GPUS"
@@ -110,11 +127,18 @@ echo "  Batch size per GPU: $POWERSAMPLE_BATCH_SIZE (using ~75GB/80GB per GPU)"
 echo "  Total parallel processing: $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE)) problems simultaneously!"
 echo ""
 echo "Algorithm:"
-echo "  MCMC steps: $POWERSAMPLE_STEPS"
+echo "  MCMC steps: $POWERSAMPLE_STEPS (MUST be 10 for proper results!)"
 echo "  Max new tokens: $POWERSAMPLE_MAX_NEW"
 echo "  Temperature: $POWERSAMPLE_TEMPERATURE"
-echo "  Dataset: Full GSM8K (${POWERSAMPLE_MAX_EXAMPLES:-1319 examples})"
-echo "  Expected time: ~5-10 minutes for full evaluation"
+echo "  Alpha (power): $POWERSAMPLE_ALPHA"
+echo ""
+echo "Dataset:"
+echo "  ✅ Evaluating FULL GSM8K test set: 1,319 problems"
+echo "  ✅ No sampling/subset - testing ALL problems"
+echo ""
+echo "Expected:"
+echo "  Time: ~5-10 minutes for full evaluation"
+echo "  Accuracy: ~8-12% (vs 5% without power sampling)"
 echo "============================================================"
 echo ""
 
@@ -136,11 +160,20 @@ if [ -n "$POWERSAMPLE_MAX_EXAMPLES" ]; then
     POWERSAMPLE_ARGS+=(--max-examples "$POWERSAMPLE_MAX_EXAMPLES")
 fi
 
+# Final confirmation of full evaluation
+echo ""
+echo "📊 CONFIRMING FULL EVALUATION:"
+echo "   - Testing ALL 1,319 GSM8K problems"
+echo "   - Using $POWERSAMPLE_STEPS MCMC refinement steps"
+echo "   - Processing $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE)) problems in parallel"
+echo "   - Expected accuracy improvement: 5% → 8-12%"
+echo ""
+
 # Choose which version to run based on settings
 if [ "$POWERSAMPLE_USE_BATCHED" -eq 1 ]; then
     echo "🚀 Starting BATCHED power sampling evaluation..."
     echo "   Using optimized multi-GPU processing with high memory utilization"
-    echo "   Processing $((POWERSAMPLE_NUM_GPUS * POWERSAMPLE_BATCH_SIZE)) problems in parallel!"
+    echo "   Evaluating FULL GSM8K dataset (1,319 problems)"
     echo ""
     POWERSAMPLE_ARGS+=(--batch-size "$POWERSAMPLE_BATCH_SIZE")
     
