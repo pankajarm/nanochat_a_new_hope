@@ -128,22 +128,14 @@ if [ -n "$POWERSAMPLE_MAX_EXAMPLES" ]; then
     POWERSAMPLE_ARGS+=(--max-examples "$POWERSAMPLE_MAX_EXAMPLES")
 fi
 
-# Choose which version to run
-if [ "$POWERSAMPLE_USE_OPTIMIZED" -eq 1 ]; then
-    echo "Running optimized power sampling with batching..."
-    POWERSAMPLE_ARGS+=(--batch-size "$POWERSAMPLE_BATCH_SIZE")
-    if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
-        torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample_optimized "${POWERSAMPLE_ARGS[@]}"
-    else
-        python -m scripts.eval_gsm8k_powersample_optimized "${POWERSAMPLE_ARGS[@]}"
-    fi
+# Use the original script with torchrun for multi-GPU
+echo "Running power sampling with $POWERSAMPLE_NUM_GPUS GPU(s)..."
+if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
+    echo "Using torchrun for multi-GPU processing..."
+    torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
 else
-    echo "Running standard power sampling..."
-    if [ "$POWERSAMPLE_NUM_GPUS" -gt 1 ]; then
-        torchrun --standalone --nproc_per_node=$POWERSAMPLE_NUM_GPUS -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
-    else
-        python -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
-    fi
+    echo "Using single GPU..."
+    python -m scripts.eval_gsm8k_powersample "${POWERSAMPLE_ARGS[@]}"
 fi
 
 # -----------------------------------------------------------------------------
