@@ -11,14 +11,19 @@ Notes:
 The whole thing is made as efficient as possible.
 """
 
-import torch
-import torch.nn.functional as F
+import math
 import signal
 import warnings
-from contextlib import contextmanager
 from collections import deque
+from contextlib import contextmanager
+from typing import Any, Dict, List, Optional, Tuple
+
+import torch
+import torch.nn.functional as F
+
 from nanochat.common import compute_init
 from nanochat.checkpoint_manager import load_model
+from nanochat.execution import execute_code
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
@@ -77,7 +82,6 @@ def use_calculator(expr):
 
     # Evaluate with timeout
     return eval_with_timeout(expr)
-
 # -----------------------------------------------------------------------------
 class KVCache:
     """
@@ -185,6 +189,25 @@ class Engine:
     def __init__(self, model, tokenizer):
         self.model = model
         self.tokenizer = tokenizer # needed for tool use
+        self._special_tokens: Dict[str, int] = {}
+        for token_name in [
+            "<|python_start|>",
+            "<|python_end|>",
+            "<|output_start|>",
+            "<|output_end|>",
+            "<|assistant_end|>",
+        ]:
+            try:
+                self._special_tokens[token_name] = self.tokenizer.encode_special(token_name)
+            except Exception:
+                # Some tokenizers used in tests may not have all special tokens.
+                # Store lazily when requested.
+                pass
+
+    def _get_special_token(self, token_name: str) -> int:
+        if token_name not in self._special_tokens:
+            self._special_tokens[token_name] = self.tokenizer.encode_special(token_name)
+        return self._special_tokens[token_name]
 
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
@@ -195,12 +218,11 @@ class Engine:
         rng.manual_seed(seed)
 
         # Get the special tokens we need to coordinate the tool use state machine
-        get_special = lambda s: self.tokenizer.encode_special(s)
-        python_start = get_special("<|python_start|>")
-        python_end = get_special("<|python_end|>")
-        output_start = get_special("<|output_start|>")
-        output_end = get_special("<|output_end|>")
-        assistant_end = get_special("<|assistant_end|>") # if sampled, ends row
+        python_start = self._get_special_token("<|python_start|>")
+        python_end = self._get_special_token("<|python_end|>")
+        output_start = self._get_special_token("<|output_start|>")
+        output_end = self._get_special_token("<|output_end|>")
+        assistant_end = self._get_special_token("<|assistant_end|>") # if sampled, ends row
         bos = self.tokenizer.get_bos_token_id() # if sampled, ends row
 
         # 1) Run a batch 1 prefill of the prompt tokens
@@ -298,7 +320,7 @@ class Engine:
         Returns a list of token sequences (list of lists of ints).
         Terminal tokens (assistant_end, bos) are not included in the results.
         """
-        assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
+        assistant_end = self._get_special_token("<|assistant_end|>")
         bos = self.tokenizer.get_bos_token_id()
         results = [tokens.copy() for _ in range(num_samples)]
         masks = [[0] * len(tokens) for _ in range(num_samples)]
@@ -315,6 +337,247 @@ class Engine:
             if all(completed):
                 break
         return results, masks
+
+    @torch.inference_mode()
+    def _get_sequence_log_prob(self, tokens: List[int]) -> float:
+        """Compute the log probability of a sequence of tokens under the model."""
+        if len(tokens) <= 1:
+            return 0.0
+        device = self.model.get_device()
+        ids = torch.tensor([tokens], dtype=torch.long, device=device)
+        inputs = ids[:, :-1]
+        targets = ids[:, 1:]
+        logits = self.model.forward(inputs)
+        logits = logits.float()
+        log_probs = F.log_softmax(logits, dim=-1)
+        gathered = log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+        total_log_prob = gathered.sum().item()
+        return float(total_log_prob)
+
+    def _apply_tool_use(
+        self,
+        tokens: List[int],
+        *,
+        timeout: float = 5.0,
+        max_output_tokens: Optional[int] = None,
+    ) -> Tuple[List[int], List[Dict[str, Any]]]:
+        """
+        Scan for python tool invocations, execute them, and append outputs.
+
+        Returns the potentially-extended token list together with metadata about
+        executed tool calls.
+        """
+        if not tokens:
+            return list(tokens), []
+
+        updated_tokens: List[int] = []
+        tool_calls: List[Dict[str, Any]] = []
+
+        python_start = self._get_special_token("<|python_start|>")
+        python_end = self._get_special_token("<|python_end|>")
+        output_start = self._get_special_token("<|output_start|>")
+        output_end = self._get_special_token("<|output_end|>")
+
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if token != python_start:
+                updated_tokens.append(token)
+                i += 1
+                continue
+
+            # Copy the python block tokens verbatim
+            updated_tokens.append(token)
+            i += 1
+            expr_tokens: List[int] = []
+            while i < len(tokens) and tokens[i] != python_end:
+                expr_tokens.append(tokens[i])
+                updated_tokens.append(tokens[i])
+                i += 1
+
+            # If we reached the end without encountering python_end, just append the
+            # remaining tokens and stop processing.
+            if i >= len(tokens):
+                # Unmatched python_end; append the remainder as-is and stop.
+                updated_tokens.extend(tokens[i:])
+                break
+
+            updated_tokens.append(tokens[i])  # add python_end
+            i += 1
+
+            # Skip execution if an output block already exists immediately after
+            if i < len(tokens) and tokens[i] == output_start:
+                continue
+
+            code = self.tokenizer.decode(expr_tokens).strip()
+            if not code:
+                continue
+
+            exec_result = execute_code(code, timeout=timeout)
+            fragments = []
+            if exec_result.stdout:
+                stdout_text = exec_result.stdout.strip()
+                if stdout_text:
+                    fragments.append(stdout_text)
+            if exec_result.stderr:
+                stderr_text = exec_result.stderr.strip()
+                if stderr_text:
+                    fragments.append(stderr_text)
+            if exec_result.error:
+                fragments.append(exec_result.error)
+            if not fragments:
+                fragments.append("None")
+
+            output_text = "\n".join(fragments)
+            output_token_ids = self.tokenizer.encode(output_text)
+            if max_output_tokens is not None:
+                output_token_ids = output_token_ids[:max_output_tokens]
+
+            updated_tokens.append(output_start)
+            updated_tokens.extend(output_token_ids)
+            updated_tokens.append(output_end)
+
+            tool_calls.append(
+                {
+                    "code": code,
+                    "output": output_text,
+                    "success": exec_result.success,
+                    "timeout": exec_result.timeout,
+                    "memory_exceeded": exec_result.memory_exceeded,
+                }
+            )
+
+        return updated_tokens, tool_calls
+
+    @torch.inference_mode()
+    def power_sample_tool_aware(
+        self,
+        prompt: List[int] | str,
+        *,
+        max_tokens: int = 256,
+        alpha: float = 4.0,
+        num_steps: int = 10,
+        temperature: float = 0.7,
+        top_k: Optional[int] = 50,
+        seed: int = 42,
+        tool_timeout: float = 5.0,
+        tool_max_output_tokens: Optional[int] = 128,
+        return_metadata: bool = False,
+    ) -> Dict[str, Any] | str:
+        """
+        Run a power-sampling inspired MCMC procedure that is aware of tool use.
+
+        Args:
+            prompt: Either a list of token ids or a raw string prompt.
+            max_tokens: Maximum new tokens sampled per proposal.
+            alpha: Power posterior exponent controlling exploitation vs. exploration.
+            num_steps: Number of MCMC refinement steps to run.
+            temperature: Sampling temperature used for proposals.
+            top_k: Optional top-k truncation for proposals.
+            seed: Random seed for reproducibility.
+            tool_timeout: Timeout in seconds for python tool execution.
+            tool_max_output_tokens: Limit on appended tool output tokens.
+            return_metadata: If True, return a dictionary with extra information.
+
+        Returns:
+            Either the best completion string or a metadata dictionary containing
+            the completion, tokens, log probability, and sampling history.
+        """
+
+        if isinstance(prompt, str):
+            bos = self.tokenizer.get_bos_token_id()
+            prompt_tokens = self.tokenizer.encode(prompt, prepend=bos)
+        elif isinstance(prompt, list):
+            prompt_tokens = list(prompt)
+        else:
+            raise TypeError("prompt must be either a string or a list of token ids")
+
+        if not prompt_tokens:
+            raise ValueError("prompt must not be empty")
+
+        prefix_length = len(prompt_tokens)
+        device = self.model.get_device()
+        rng = torch.Generator(device=device)
+        rng.manual_seed(seed)
+
+        def draw_sample(sample_seed: int) -> List[int]:
+            sequences, _ = self.generate_batch(
+                prompt_tokens,
+                num_samples=1,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_k=top_k,
+                seed=sample_seed,
+            )
+            return sequences[0]
+
+        initial_sequence = draw_sample(seed)
+        current_tokens, current_tools = self._apply_tool_use(
+            initial_sequence,
+            timeout=tool_timeout,
+            max_output_tokens=tool_max_output_tokens,
+        )
+        current_log_prob = self._get_sequence_log_prob(current_tokens)
+
+        best_tokens = current_tokens
+        best_log_prob = current_log_prob
+        best_tools = current_tools
+
+        history: List[Dict[str, Any]] = [
+            {
+                "step": 0,
+                "accepted": True,
+                "log_prob": current_log_prob,
+                "tools": current_tools,
+            }
+        ]
+
+        for step in range(num_steps):
+            proposal_seed = seed + step + 1
+            proposal_sequence = draw_sample(proposal_seed)
+            proposal_tokens, proposal_tools = self._apply_tool_use(
+                proposal_sequence,
+                timeout=tool_timeout,
+                max_output_tokens=tool_max_output_tokens,
+            )
+            proposal_log_prob = self._get_sequence_log_prob(proposal_tokens)
+            log_accept_ratio = alpha * (proposal_log_prob - current_log_prob)
+
+            if log_accept_ratio >= 0:
+                accept = True
+            else:
+                accept_prob = math.exp(log_accept_ratio)
+                accept = torch.rand(1, generator=rng).item() < accept_prob
+
+            history.append(
+                {
+                    "step": step + 1,
+                    "accepted": accept,
+                    "log_prob": proposal_log_prob,
+                    "tools": proposal_tools,
+                }
+            )
+
+            if accept:
+                current_tokens = proposal_tokens
+                current_log_prob = proposal_log_prob
+                current_tools = proposal_tools
+                if current_log_prob > best_log_prob:
+                    best_tokens = current_tokens
+                    best_log_prob = current_log_prob
+                    best_tools = current_tools
+
+        completion_text = self.tokenizer.decode(best_tokens[prefix_length:])
+        if return_metadata:
+            return {
+                "completion": completion_text,
+                "tokens": best_tokens,
+                "log_prob": best_log_prob,
+                "history": history,
+                "tool_calls": best_tools,
+                "prompt_length": prefix_length,
+            }
+        return completion_text
 
 
 if __name__ == "__main__":

@@ -162,10 +162,19 @@ Generated: {timestamp}
 
     # bloat metrics: package all of the source code and assess its weight
     packaged = run_command('files-to-prompt . -e py -e md -e rs -e html -e toml -e sh --ignore "*target*" --cxml')
-    num_chars = len(packaged)
-    num_lines = len(packaged.split('\n'))
-    num_files = len([x for x in packaged.split('\n') if x.startswith('<source>')])
-    num_tokens = num_chars // 4 # assume approximately 4 chars per token
+    if packaged:
+        num_chars = len(packaged)
+        num_lines = len(packaged.split('\n'))
+        num_files = len([x for x in packaged.split('\n') if x.startswith('<source>')])
+        num_tokens = num_chars // 4 # assume approximately 4 chars per token
+        bloat_note = ""
+    else:
+        # files-to-prompt command not available, use fallback values
+        num_chars = 0
+        num_lines = 0
+        num_files = 0
+        num_tokens = 0
+        bloat_note = " (files-to-prompt not available)"
 
     # count dependencies via uv.lock
     uv_lock_lines = 0
@@ -174,7 +183,7 @@ Generated: {timestamp}
             uv_lock_lines = len(f.readlines())
 
     header += f"""
-### Bloat
+### Bloat{bloat_note}
 - Characters: {num_chars:,}
 - Lines: {num_lines:,}
 - Files: {num_files:,}
@@ -201,6 +210,7 @@ EXPECTED_FILES = [
     "chat-evaluation-mid.md",
     "chat-sft.md",
     "chat-evaluation-sft.md",
+    "power-sampling-evaluation.md",
     "chat-rl.md",
     "chat-evaluation-rl.md",
 ]
@@ -306,6 +316,8 @@ class Report:
                     final_metrics["mid"] = extract(section, chat_metrics)
                 if file_name == "chat-evaluation-sft.md":
                     final_metrics["sft"] = extract(section, chat_metrics)
+                if file_name == "power-sampling-evaluation.md":
+                    final_metrics["power"] = extract(section, "GSM8K")
                 if file_name == "chat-evaluation-rl.md":
                     final_metrics["rl"] = extract(section, "GSM8K") # RL only evals GSM8K
                 # append this section of the report
@@ -323,7 +335,7 @@ class Report:
             # Custom ordering: CORE first, ChatCORE last, rest in middle
             all_metrics = sorted(all_metrics, key=lambda x: (x != "CORE", x == "ChatCORE", x))
             # Fixed column widths
-            stages = ["base", "mid", "sft", "rl"]
+            stages = ["base", "mid", "sft", "power", "rl"]
             metric_width = 15
             value_width = 8
             # Write table header
