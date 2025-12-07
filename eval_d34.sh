@@ -161,8 +161,12 @@ python -m nanochat.report reset
 # Run evaluations
 # Default: single GPU (A10 24GB or similar)
 # For multi-GPU, set NPROC_PER_NODE=8 (or number of GPUs available)
+# For larger VRAM GPUs (e.g., GH200 96GB), increase EVAL_BATCH_SIZE for faster evals
 
 NPROC_PER_NODE=${NPROC_PER_NODE:-1}
+EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-8}  # default 8 for 24GB GPUs, increase for more VRAM
+
+echo "Using batch size: $EVAL_BATCH_SIZE (set EVAL_BATCH_SIZE env var to change)"
 
 # Run base model evaluation if base checkpoints exist
 if [ -d "$NANOCHAT_BASE_DIR/base_checkpoints" ]; then
@@ -179,14 +183,14 @@ fi
 if [ -d "$NANOCHAT_BASE_DIR/mid_checkpoints" ]; then
     echo ""
     echo "Running chat evaluations on mid model..."
-    torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
+    torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid -b $EVAL_BATCH_SIZE
 fi
 
 # Run chat evaluation on SFT model
 if [ -d "$NANOCHAT_BASE_DIR/chatsft_checkpoints" ]; then
     echo ""
     echo "Running chat evaluations on SFT model..."
-    torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
+    torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft -b $EVAL_BATCH_SIZE
 fi
 
 # -----------------------------------------------------------------------------
