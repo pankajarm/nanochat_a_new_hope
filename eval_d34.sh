@@ -45,13 +45,21 @@ if [ "$(uname -m)" = "aarch64" ]; then
         # Create venv with system-site-packages to inherit PyTorch
         [ -d ".venv" ] || uv venv --system-site-packages
         source .venv/bin/activate
-        # Verify venv sees system PyTorch with CUDA
-        if ! python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-            echo "WARNING: venv doesn't see system PyTorch CUDA. Installing deps with pip..."
-        fi
         # Install remaining dependencies with pip (not uv sync, which may override torch)
         pip install datasets>=4.0.0 fastapi>=0.117.1 psutil>=7.1.0 regex>=2025.9.1 \
             tiktoken>=0.11.0 tokenizers>=0.22.0 uvicorn>=0.36.0 wandb>=0.21.3 huggingface_hub maturin
+        # IMPORTANT: Remove any torch that pip may have installed as a dependency
+        # This forces the venv to use system-site-packages torch (which has CUDA)
+        # pip uninstall doesn't work well with system-site-packages, so we rm directly
+        rm -rf .venv/lib/python*/site-packages/torch* 2>/dev/null || true
+        # Verify we're now using system torch with CUDA
+        if python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+            echo "Verified: Using system PyTorch with CUDA support!"
+        else
+            echo "ERROR: Still not seeing system PyTorch with CUDA after cleanup."
+            echo "Please check your system PyTorch installation."
+            exit 1
+        fi
     else
         echo "ERROR: No system PyTorch with CUDA found."
         echo ""

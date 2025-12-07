@@ -30,9 +30,51 @@ mkdir -p $NANOCHAT_BASE_DIR
 
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env" 2>/dev/null || true  # add uv to PATH if just installed
-[ -d ".venv" ] || uv venv
-uv sync --extra gpu
-source .venv/bin/activate
+
+# Handle ARM64 (e.g., GH200) - PyTorch CUDA wheels only available for x86_64
+if [ "$(uname -m)" = "aarch64" ]; then
+    echo "Detected ARM64 architecture (e.g., GH200 Grace CPU)"
+    echo "PyTorch CUDA wheels are not available for ARM64 from the standard index."
+    echo ""
+    echo "Checking for system PyTorch installation..."
+    if python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+        echo "Found working system PyTorch with CUDA support!"
+        TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)")
+        echo "Using system PyTorch $TORCH_VERSION"
+        echo ""
+        # Create venv with system-site-packages to inherit PyTorch
+        [ -d ".venv" ] || uv venv --system-site-packages
+        source .venv/bin/activate
+        # Install remaining dependencies with pip (not uv sync, which may override torch)
+        pip install datasets>=4.0.0 fastapi>=0.117.1 psutil>=7.1.0 regex>=2025.9.1 \
+            tiktoken>=0.11.0 tokenizers>=0.22.0 uvicorn>=0.36.0 wandb>=0.21.3 huggingface_hub maturin
+        # IMPORTANT: Remove any torch that pip may have installed as a dependency
+        # This forces the venv to use system-site-packages torch (which has CUDA)
+        # pip uninstall doesn't work well with system-site-packages, so we rm directly
+        rm -rf .venv/lib/python*/site-packages/torch* 2>/dev/null || true
+        # Verify we're now using system torch with CUDA
+        if python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+            echo "Verified: Using system PyTorch with CUDA support!"
+        else
+            echo "ERROR: Still not seeing system PyTorch with CUDA after cleanup."
+            echo "Please check your system PyTorch installation."
+            exit 1
+        fi
+    else
+        echo "ERROR: No system PyTorch with CUDA found."
+        echo ""
+        echo "For GH200/ARM64, please either:"
+        echo "  1. Use NVIDIA NGC container: docker pull nvcr.io/nvidia/pytorch:24.10-py3"
+        echo "  2. Install PyTorch manually for ARM64+CUDA before running this script"
+        echo ""
+        exit 1
+    fi
+else
+    # x86_64 - use the CUDA 12.8 index with venv
+    [ -d ".venv" ] || uv venv
+    source .venv/bin/activate
+    uv sync --extra gpu
+fi
 
 # -----------------------------------------------------------------------------
 # Install build tools (needed for compiling Rust/C code)
