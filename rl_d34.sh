@@ -21,6 +21,7 @@
 set -e  # Exit on error
 
 export OMP_NUM_THREADS=1
+export UV_LINK_MODE=copy  # suppress hardlink warning when project is on NFS
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
@@ -28,9 +29,18 @@ mkdir -p $NANOCHAT_BASE_DIR
 # Python venv setup with uv
 
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env" 2>/dev/null || true  # add uv to PATH if just installed
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu
 source .venv/bin/activate
+
+# -----------------------------------------------------------------------------
+# Install build tools (needed for compiling Rust/C code)
+
+if ! command -v cc &> /dev/null; then
+    echo "Installing build-essential (requires sudo)..."
+    sudo apt-get update && sudo apt-get install -y build-essential
+fi
 
 # -----------------------------------------------------------------------------
 # Install Rust / Cargo (needed for the tokenizer)
