@@ -39,11 +39,19 @@ if [ "$(uname -m)" = "aarch64" ]; then
     echo "Checking for system PyTorch installation..."
     if python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
         echo "Found working system PyTorch with CUDA support!"
-        # Create venv with system packages to inherit PyTorch
+        TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)")
+        echo "Using system PyTorch $TORCH_VERSION"
+        echo ""
+        # Create venv with system-site-packages to inherit PyTorch
         [ -d ".venv" ] || uv venv --system-site-packages
         source .venv/bin/activate
-        # Install remaining dependencies (excluding torch since we use system's)
-        uv sync --no-install-package torch
+        # Verify venv sees system PyTorch with CUDA
+        if ! python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+            echo "WARNING: venv doesn't see system PyTorch CUDA. Installing deps with pip..."
+        fi
+        # Install remaining dependencies with pip (not uv sync, which may override torch)
+        pip install datasets>=4.0.0 fastapi>=0.117.1 psutil>=7.1.0 regex>=2025.9.1 \
+            tiktoken>=0.11.0 tokenizers>=0.22.0 uvicorn>=0.36.0 wandb>=0.21.3 huggingface_hub maturin
     else
         echo "ERROR: No system PyTorch with CUDA found."
         echo ""
@@ -54,7 +62,7 @@ if [ "$(uname -m)" = "aarch64" ]; then
         exit 1
     fi
 else
-    # x86_64 - use the CUDA 12.8 index
+    # x86_64 - use the CUDA 12.8 index with venv
     [ -d ".venv" ] || uv venv
     source .venv/bin/activate
     uv sync --extra gpu
