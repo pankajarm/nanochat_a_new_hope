@@ -17,6 +17,13 @@ if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
 fi
 python -m nanochat.report reset
+
+# Install build tools (needed for compiling Rust/C code)
+if ! command -v cc &> /dev/null; then
+    echo "Installing build-essential (requires sudo)..."
+    sudo apt-get update && sudo apt-get install -y build-essential
+fi
+
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
