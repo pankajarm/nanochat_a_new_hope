@@ -30,9 +30,35 @@ mkdir -p $NANOCHAT_BASE_DIR
 
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 source "$HOME/.local/bin/env" 2>/dev/null || true  # add uv to PATH if just installed
-[ -d ".venv" ] || uv venv
-uv sync --extra gpu
-source .venv/bin/activate
+
+# Handle ARM64 (e.g., GH200) - PyTorch CUDA wheels only available for x86_64
+if [ "$(uname -m)" = "aarch64" ]; then
+    echo "Detected ARM64 architecture (e.g., GH200 Grace CPU)"
+    echo "PyTorch CUDA wheels are not available for ARM64 from the standard index."
+    echo ""
+    echo "Checking for system PyTorch installation..."
+    if python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+        echo "Found working system PyTorch with CUDA support!"
+        # Create venv with system packages to inherit PyTorch
+        [ -d ".venv" ] || uv venv --system-site-packages
+        source .venv/bin/activate
+        # Install remaining dependencies (excluding torch since we use system's)
+        uv sync --no-install-package torch
+    else
+        echo "ERROR: No system PyTorch with CUDA found."
+        echo ""
+        echo "For GH200/ARM64, please either:"
+        echo "  1. Use NVIDIA NGC container: docker pull nvcr.io/nvidia/pytorch:24.10-py3"
+        echo "  2. Install PyTorch manually for ARM64+CUDA before running this script"
+        echo ""
+        exit 1
+    fi
+else
+    # x86_64 - use the CUDA 12.8 index
+    [ -d ".venv" ] || uv venv
+    source .venv/bin/activate
+    uv sync --extra gpu
+fi
 
 # -----------------------------------------------------------------------------
 # Install build tools (needed for compiling Rust/C code)
