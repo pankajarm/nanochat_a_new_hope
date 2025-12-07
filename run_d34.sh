@@ -61,8 +61,7 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # -----------------------------------------------------------------------------
-# Initialize CUDA (required for H100/A100 clusters)
-# This fixes "Error 802: system not yet initialized" issues
+# Initialize CUDA environment (required for H100/A100 clusters)
 
 echo "Initializing CUDA environment..."
 
@@ -71,9 +70,9 @@ if command -v nvidia-smi &> /dev/null; then
     sudo nvidia-smi -pm 1 2>/dev/null || echo "Note: Could not enable persistence mode (may need sudo)"
 fi
 
-# Start nvidia-fabricmanager (required for H100 NVLink)
+# Start nvidia-fabricmanager (required for multi-GPU NVSwitch systems)
 if systemctl list-unit-files 2>/dev/null | grep -q nvidia-fabricmanager; then
-    sudo systemctl start nvidia-fabricmanager 2>/dev/null || echo "Note: Could not start nvidia-fabricmanager"
+    sudo systemctl start nvidia-fabricmanager 2>/dev/null || true  # OK to fail on single-GPU systems
 fi
 
 # Verify CUDA is working

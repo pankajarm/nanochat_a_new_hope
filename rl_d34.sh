@@ -91,7 +91,15 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 
 # Build the rustbpe Tokenizer
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+if [ "$(uname -m)" = "aarch64" ]; then
+    # ARM64: use maturin directly (installed via pip)
+    maturin develop --release --manifest-path rustbpe/Cargo.toml
+    # Re-remove torch in case maturin reinstalled it as a dependency
+    rm -rf .venv/lib/python*/site-packages/torch* 2>/dev/null || true
+else
+    # x86_64: use uv run
+    uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+fi
 
 # -----------------------------------------------------------------------------
 # wandb setup
@@ -185,8 +193,7 @@ print("\nAll downloads complete!")
 PYTHON_SCRIPT
 
 # -----------------------------------------------------------------------------
-# Initialize CUDA (required for H100/A100 clusters)
-# This fixes "Error 802: system not yet initialized" issues
+# Initialize CUDA environment
 
 echo "Initializing CUDA environment..."
 
@@ -195,10 +202,15 @@ if command -v nvidia-smi &> /dev/null; then
     sudo nvidia-smi -pm 1 2>/dev/null || echo "Note: Could not enable persistence mode (may need sudo)"
 fi
 
-# Start nvidia-fabricmanager (required for H100 NVLink)
-# Check if it's available and try to start it
-if systemctl list-unit-files | grep -q nvidia-fabricmanager; then
-    sudo systemctl start nvidia-fabricmanager 2>/dev/null || echo "Note: Could not start nvidia-fabricmanager"
+# Start nvidia-fabricmanager (only needed for multi-GPU NVSwitch systems, not GH200)
+# GH200 doesn't use NVSwitch, so this will fail - that's OK
+if systemctl list-unit-files 2>/dev/null | grep -q nvidia-fabricmanager; then
+    sudo systemctl start nvidia-fabricmanager 2>/dev/null || true  # OK to fail on GH200
+fi
+
+# For ARM64/GH200: ensure we're using system torch (re-remove in case something reinstalled it)
+if [ "$(uname -m)" = "aarch64" ]; then
+    rm -rf .venv/lib/python*/site-packages/torch* 2>/dev/null || true
 fi
 
 # Verify CUDA is working
