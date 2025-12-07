@@ -200,6 +200,25 @@ fi
 python -m nanochat.report reset
 
 # -----------------------------------------------------------------------------
+# Initialize CUDA (required for H100/A100 clusters)
+# This fixes "Error 802: system not yet initialized" issues
+
+echo "Initializing CUDA environment..."
+
+# Enable GPU persistence mode (keeps driver loaded)
+if command -v nvidia-smi &> /dev/null; then
+    sudo nvidia-smi -pm 1 2>/dev/null || echo "Note: Could not enable persistence mode (may need sudo)"
+fi
+
+# Start nvidia-fabricmanager (required for H100 NVLink)
+if systemctl list-unit-files 2>/dev/null | grep -q nvidia-fabricmanager; then
+    sudo systemctl start nvidia-fabricmanager 2>/dev/null || echo "Note: Could not start nvidia-fabricmanager"
+fi
+
+# Verify CUDA is working
+python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available!'; print(f'CUDA OK: {torch.cuda.device_count()} GPUs')"
+
+# -----------------------------------------------------------------------------
 # Run evaluations
 # Default: single GPU (A10 24GB or similar)
 # For multi-GPU, set NPROC_PER_NODE=8 (or number of GPUs available)
