@@ -218,7 +218,7 @@ If you find nanochat helpful in your research cite simply as:
 }
 ```
 
-This is test
+This is pankaj_dev branch
 
 ## License
 
