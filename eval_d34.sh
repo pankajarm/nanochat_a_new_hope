@@ -98,7 +98,19 @@ tokenizer_dst = os.path.join(base_dir, "tokenizer")
 if copy_dir_contents(tokenizer_src, tokenizer_dst):
     print(f"Tokenizer ready at: {tokenizer_dst}")
 else:
-    print(f"Warning: No tokenizer directory found in {local_dir}")
+    # Tokenizer files might be at root level (tokenizer.pkl, token_bytes.pt)
+    tokenizer_files = ["tokenizer.pkl", "token_bytes.pt"]
+    found_files = [f for f in tokenizer_files if os.path.exists(os.path.join(local_dir, f))]
+    if found_files:
+        os.makedirs(tokenizer_dst, exist_ok=True)
+        for f in found_files:
+            src = os.path.join(local_dir, f)
+            dst = os.path.join(tokenizer_dst, f)
+            shutil.copy2(src, dst)
+            print(f"Copied {f} -> {tokenizer_dst}/")
+        print(f"Tokenizer ready at: {tokenizer_dst}")
+    else:
+        print(f"Warning: No tokenizer files found in {local_dir}")
 
 # Copy SFT checkpoint files
 sft_src = os.path.join(local_dir, "chatsft_checkpoints")
