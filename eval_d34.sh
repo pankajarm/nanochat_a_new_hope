@@ -7,7 +7,13 @@
 # HuggingFace model: https://huggingface.co/karpathy/nanochat-d34
 #
 # Hardware requirements: Single GPU with 24GB+ VRAM (e.g., A10, RTX 4090, RTX 3090)
+# Also supports ARM64/GH200 with 96GB VRAM (uses system PyTorch)
 # Default runs on 1 GPU. For multi-GPU, set NPROC_PER_NODE environment variable.
+#
+# GH200 Notes:
+# - Requires NVIDIA open kernel modules (nvidia-driver-XXX-open)
+# - Uses system-installed PyTorch (Lambda Labs pre-installs it)
+# - Set EVAL_BATCH_SIZE=48 for optimal performance with 96GB VRAM
 
 # Example launch (single GPU, default):
 # bash eval_d34.sh
@@ -91,7 +97,13 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 
 # Build the rustbpe Tokenizer
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+if [ "$(uname -m)" = "aarch64" ]; then
+    # ARM64: use maturin directly (installed via pip)
+    maturin develop --release --manifest-path rustbpe/Cargo.toml
+else
+    # x86_64: use uv run
+    uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+fi
 
 # -----------------------------------------------------------------------------
 # Download d34 model weights and tokenizer from HuggingFace
