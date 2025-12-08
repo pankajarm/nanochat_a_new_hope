@@ -72,6 +72,8 @@ parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run th
 parser.add_argument('-d', '--dtype', type=str, default='bfloat16', choices=['float32', 'bfloat16'])
 parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
 parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the server to')
+parser.add_argument('-q', '--quantize', type=str, default=None, choices=['8bit', '4bit'],
+                    help='Quantization mode for CPU inference: 8bit reduces memory ~4x. Also settable via NANOCHAT_QUANTIZE env var')
 args = parser.parse_args()
 
 # Configure logging for conversation traffic
@@ -108,7 +110,7 @@ class WorkerPool:
         self.workers: List[Worker] = []
         self.available_workers: asyncio.Queue = asyncio.Queue()
 
-    async def initialize(self, source: str, model_tag: Optional[str] = None, step: Optional[int] = None):
+    async def initialize(self, source: str, model_tag: Optional[str] = None, step: Optional[int] = None, quantize: Optional[str] = None):
         """Load model on each GPU."""
         print(f"Initializing worker pool with {self.num_gpus} GPUs...")
         if self.num_gpus > 1:
@@ -123,7 +125,7 @@ class WorkerPool:
                 device = torch.device(device_type) # e.g. cpu|mps
                 print(f"Loading model on {device_type}...")
 
-            model, tokenizer, _ = load_model(source, device, phase="eval", model_tag=model_tag, step=step)
+            model, tokenizer, _ = load_model(source, device, phase="eval", model_tag=model_tag, step=step, quantize=quantize)
             engine = Engine(model, tokenizer)
             autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
 
@@ -225,7 +227,7 @@ async def lifespan(app: FastAPI):
     """Load models on all GPUs on startup."""
     print("Loading nanochat models across GPUs...")
     app.state.worker_pool = WorkerPool(num_gpus=args.num_gpus)
-    await app.state.worker_pool.initialize(args.source, model_tag=args.model_tag, step=args.step)
+    await app.state.worker_pool.initialize(args.source, model_tag=args.model_tag, step=args.step, quantize=args.quantize)
     print(f"Server ready at http://localhost:{args.port}")
     yield
 

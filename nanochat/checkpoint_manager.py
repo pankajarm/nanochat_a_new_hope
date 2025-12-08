@@ -1,5 +1,18 @@
 """
 Utilities for saving and loading model/optim/state checkpoints.
+
+Memory optimization for inference:
+- CUDA: Uses bfloat16 (native, fastest)
+- MPS (Mac): Uses float16 (~4.4GB for d34 model). Requires Mac with 16GB+ unified memory for d34.
+- CPU: Uses float32 by default, or int8 with quantization (~2.2GB for d34)
+
+Environment variables:
+- NANOCHAT_QUANTIZE: Set to "8bit" for int8 dynamic quantization on CPU (reduces memory ~4x)
+
+Note on MPS memory limits:
+- MPS has a default memory limit based on system RAM
+- For large models, use a smaller model (d12, d20) or use CPU with 8bit quantization
+- Do NOT use PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 as it can crash the system
 """
 import os
 import re
@@ -19,6 +32,26 @@ logger = logging.getLogger(__name__)
 def log0(message):
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(message)
+
+
+def quantize_model_int8(model):
+    """
+    Apply dynamic int8 quantization to Linear layers (CPU only).
+    Reduces memory by ~4x compared to float32.
+    """
+    try:
+        from torch.ao.quantization import quantize_dynamic
+        log0("Applying int8 dynamic quantization to Linear layers...")
+        model = quantize_dynamic(
+            model,
+            {torch.nn.Linear},  # Quantize Linear layers
+            dtype=torch.qint8
+        )
+        log0("✅ Int8 quantization applied successfully")
+        return model
+    except Exception as e:
+        log0(f"⚠️ Quantization failed, using original model: {e}")
+        return model
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
@@ -54,50 +87,105 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     return model_data, optimizer_data, meta_data
 
 
-def build_model(checkpoint_dir, step, device, phase):
+def build_model(checkpoint_dir, step, device, phase, quantize=None):
     """
     A bunch of repetitive code to build a model from a given checkpoint.
+    
+    Args:
+        checkpoint_dir: Path to checkpoint directory
+        step: Checkpoint step number
+        device: Target device (cpu, cuda, mps)
+        phase: "train" or "eval"
+        quantize: Quantization mode - None, "8bit", or "4bit" (4bit requires bitsandbytes)
+                  Can also be set via NANOCHAT_QUANTIZE environment variable
+    
     Returns:
     - base model - uncompiled, not wrapped in DDP
     - tokenizer
     - meta data saved during base model training
     """
     assert phase in ["train", "eval"], f"Invalid phase: {phase}"
-    # For MPS, load to CPU first to avoid memory fragmentation, then convert and move
-    load_device = "cpu" if device.type == "mps" else device
+    
+    # Check environment variable for quantization if not explicitly set
+    if quantize is None:
+        quantize = os.environ.get("NANOCHAT_QUANTIZE", None)
+    
+    # Determine if we should use quantization (only for eval on CPU)
+    use_quantization = quantize is not None and phase == "eval" and device.type == "cpu"
+    if quantize and device.type != "cpu":
+        log0(f"⚠️ Quantization '{quantize}' requested but only supported on CPU. Using {device.type} without quantization.")
+        use_quantization = False
+    if quantize and phase != "eval":
+        log0(f"⚠️ Quantization only supported for eval phase, not training.")
+        use_quantization = False
+    
+    # For MPS or CPU with quantization, load to CPU first
+    load_device = "cpu" if device.type == "mps" or use_quantization else device
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, load_device, load_optimizer=False)
-    if device.type == "cpu":
-        # Convert bfloat16 tensors to float32 for CPU inference
+    
+    if device.type == "cpu" or use_quantization:
+        # Convert bfloat16 tensors to float32 for CPU inference (required for quantization)
         model_data = {
             k: v.float() if v.dtype == torch.bfloat16 else v
             for k, v in model_data.items()
         }
     elif device.type == "mps":
         # Convert bfloat16 tensors to float16 for MPS (saves memory vs float32)
-        # MPS doesn't support bfloat16 but does support float16
+        # MPS doesn't support bfloat16 or float8, float16 is the smallest supported type
         # Convert on CPU first, then move to MPS to avoid memory issues
-        model_data = {
-            k: v.half().to(device) if v.dtype == torch.bfloat16 else v.to(device)
-            for k, v in model_data.items()
-        }
+        log0("MPS detected: Converting model to float16 (smallest supported type on MPS)")
+        try:
+            model_data = {
+                k: v.half().to(device) if v.dtype == torch.bfloat16 else v.to(device)
+                for k, v in model_data.items()
+            }
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower() or "MPS backend" in str(e):
+                log0("❌ MPS out of memory! The model is too large for your Mac's GPU memory.")
+                log0("   Options:")
+                log0("   1. Use a smaller model (d12 or d20 instead of d34)")
+                log0("   2. Use CPU with 8-bit quantization: --device-type cpu -q 8bit")
+                log0("   3. Close other applications to free memory")
+            raise
+    
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
+    
+    # For quantization, build model on CPU first
+    build_device = "cpu" if use_quantization else device
     with torch.device("meta"):
         model = GPT(model_config)
+    
     # Load the model state
-    model.to_empty(device=device)
+    model.to_empty(device=build_device)
     model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
     model.load_state_dict(model_data, strict=True, assign=True)
+    
     # Free the model_data dict to reclaim memory
     del model_data
+    
+    # Apply quantization if requested (CPU only, eval only)
+    if use_quantization:
+        if quantize == "8bit":
+            model = quantize_model_int8(model)
+        elif quantize == "4bit":
+            log0("⚠️ 4-bit quantization requires bitsandbytes library (pip install bitsandbytes)")
+            log0("   4-bit is primarily for CUDA. For CPU, use 8bit instead.")
+            # For now, fall back to 8bit for CPU
+            model = quantize_model_int8(model)
+        else:
+            log0(f"⚠️ Unknown quantization mode '{quantize}', using 8bit")
+            model = quantize_model_int8(model)
+    
     # Put the model in the right training phase / mode
     if phase == "eval":
         model.eval()
     else:
         model.train()
+    
     # Load the Tokenizer
     tokenizer = get_tokenizer()
     # Sanity check: compatibility between model and tokenizer
@@ -136,7 +224,7 @@ def find_last_step(checkpoint_dir):
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
 
-def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
+def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None, quantize=None):
     if model_tag is None:
         # guess the model tag by defaulting to the largest model
         model_tag = find_largest_model(checkpoints_dir)
@@ -148,10 +236,22 @@ def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=Non
     assert step is not None, f"No checkpoints found in {checkpoint_dir}"
     # build the model
     log0(f"Loading model from {checkpoint_dir} with step {step}")
-    model, tokenizer, meta_data = build_model(checkpoint_dir, step, device, phase)
+    model, tokenizer, meta_data = build_model(checkpoint_dir, step, device, phase, quantize=quantize)
     return model, tokenizer, meta_data
 
-def load_model(source, *args, **kwargs):
+def load_model(source, device, phase, model_tag=None, step=None, quantize=None):
+    """
+    Load a model from the standard nanochat checkpoint directories.
+    
+    Args:
+        source: One of "base", "mid", "sft", "rl"
+        device: Target device (cpu, cuda, mps)
+        phase: "train" or "eval"
+        model_tag: Optional model tag (e.g., "d34"), auto-detected if None
+        step: Optional checkpoint step, uses latest if None
+        quantize: Quantization mode - None, "8bit", or "4bit"
+                  Can also be set via NANOCHAT_QUANTIZE environment variable
+    """
     model_dir = {
         "base": "base_checkpoints",
         "mid": "mid_checkpoints",
@@ -160,4 +260,4 @@ def load_model(source, *args, **kwargs):
     }[source]
     base_dir = get_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
-    return load_model_from_dir(checkpoints_dir, *args, **kwargs)
+    return load_model_from_dir(checkpoints_dir, device, phase, model_tag=model_tag, step=step, quantize=quantize)
