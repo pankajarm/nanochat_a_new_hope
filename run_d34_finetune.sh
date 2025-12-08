@@ -114,13 +114,39 @@ if command -v nvidia-smi &> /dev/null; then
     sudo nvidia-smi -pm 1 2>/dev/null || echo "Note: Could not enable persistence mode (may need sudo)"
 fi
 
-# Start nvidia-fabricmanager (required for multi-GPU NVSwitch systems)
+# Start nvidia-fabricmanager (required for multi-GPU NVSwitch systems like 8xH100)
+# This is CRITICAL for NVSwitch-based multi-GPU systems
 if systemctl list-unit-files 2>/dev/null | grep -q nvidia-fabricmanager; then
-    sudo systemctl start nvidia-fabricmanager 2>/dev/null || true  # OK to fail on single-GPU systems
+    echo "Starting nvidia-fabricmanager service..."
+    sudo systemctl start nvidia-fabricmanager
+    # Wait for fabricmanager to fully initialize
+    sleep 5
+    # Check if it's actually running
+    if systemctl is-active --quiet nvidia-fabricmanager; then
+        echo "✅ nvidia-fabricmanager is running"
+    else
+        echo "⚠️  nvidia-fabricmanager failed to start, checking status..."
+        sudo systemctl status nvidia-fabricmanager || true
+    fi
 fi
 
+# Additional wait for CUDA to fully initialize after fabricmanager
+sleep 2
+
 # Verify CUDA is working
-python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available!'; print(f'CUDA OK: {torch.cuda.device_count()} GPUs')"
+echo "Verifying CUDA availability..."
+if ! python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available!'; print(f'CUDA OK: {torch.cuda.device_count()} GPUs')"; then
+    echo "❌ CUDA verification failed. Troubleshooting..."
+    echo "nvidia-smi output:"
+    nvidia-smi || true
+    echo ""
+    echo "fabricmanager status:"
+    sudo systemctl status nvidia-fabricmanager 2>/dev/null || echo "fabricmanager not found"
+    echo ""
+    echo "Try running: sudo systemctl restart nvidia-fabricmanager"
+    echo "Then re-run this script."
+    exit 1
+fi
 
 # Number of processes/GPUs to use
 NPROC_PER_NODE=8
