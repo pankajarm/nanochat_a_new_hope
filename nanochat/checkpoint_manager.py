@@ -40,7 +40,21 @@ def quantize_model_int8(model):
     Reduces memory by ~4x compared to float32.
     """
     try:
+        import platform
         from torch.ao.quantization import quantize_dynamic
+        
+        # Set the quantization backend based on platform
+        # macOS needs 'qnnpack', Linux typically uses 'fbgemm' (x86) or 'qnnpack' (ARM)
+        if platform.system() == "Darwin":  # macOS
+            torch.backends.quantized.engine = 'qnnpack'
+            log0("Using 'qnnpack' quantization backend (macOS)")
+        elif platform.machine() in ('arm64', 'aarch64'):  # ARM Linux
+            torch.backends.quantized.engine = 'qnnpack'
+            log0("Using 'qnnpack' quantization backend (ARM)")
+        else:  # x86 Linux
+            torch.backends.quantized.engine = 'fbgemm'
+            log0("Using 'fbgemm' quantization backend (x86)")
+        
         log0("Applying int8 dynamic quantization to Linear layers...")
         model = quantize_dynamic(
             model,
