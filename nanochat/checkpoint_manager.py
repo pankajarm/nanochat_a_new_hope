@@ -124,23 +124,77 @@ def build_model(checkpoint_dir, step, device, phase, quantize=None):
     if quantize is None:
         quantize = os.environ.get("NANOCHAT_QUANTIZE", None)
     
-    # Determine if we should use quantization (only for eval on CPU)
-    use_quantization = quantize is not None and phase == "eval" and device.type == "cpu"
-    if quantize and device.type != "cpu":
+    # First, load metadata to check if this is a pre-quantized model
+    meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta_data = json.load(f)
+    
+    # Check if this is a pre-quantized model
+    is_prequantized = meta_data.get("quantization") is not None
+    if is_prequantized:
+        log0(f"Detected pre-quantized model: {meta_data.get('quantization')}")
+        if device.type != "cpu":
+            log0(f"⚠️ Pre-quantized int8 models only work on CPU. Switching to CPU.")
+            device = torch.device("cpu")
+    
+    # Determine if we should apply quantization on-the-fly (only for non-prequantized models)
+    use_quantization = quantize is not None and phase == "eval" and device.type == "cpu" and not is_prequantized
+    if quantize and is_prequantized:
+        log0(f"⚠️ Model is already pre-quantized, ignoring --quantize flag")
+    elif quantize and device.type != "cpu":
         log0(f"⚠️ Quantization '{quantize}' requested but only supported on CPU. Using {device.type} without quantization.")
         use_quantization = False
-    if quantize and phase != "eval":
+    elif quantize and phase != "eval":
         log0(f"⚠️ Quantization only supported for eval phase, not training.")
         use_quantization = False
     
     # For MPS or CPU with quantization, load to CPU first
-    load_device = "cpu" if device.type == "mps" or use_quantization else device
-    model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, load_device, load_optimizer=False)
+    load_device = "cpu" if device.type == "mps" or use_quantization or is_prequantized else device
+    model_data, optimizer_data, _ = load_checkpoint(checkpoint_dir, step, load_device, load_optimizer=False)
     
+    # Handle pre-quantized models differently
+    if is_prequantized:
+        # Set the quantization backend
+        import platform
+        if platform.system() == "Darwin":  # macOS
+            torch.backends.quantized.engine = 'qnnpack'
+        elif platform.machine() in ('arm64', 'aarch64'):  # ARM Linux
+            torch.backends.quantized.engine = 'qnnpack'
+        else:  # x86 Linux
+            torch.backends.quantized.engine = 'fbgemm'
+        log0(f"Using '{torch.backends.quantized.engine}' quantization backend")
+        
+        # Build the model, quantize it, then load the pre-quantized weights
+        model_config_kwargs = meta_data["model_config"]
+        log0(f"Building model with config: {model_config_kwargs}")
+        model_config = GPTConfig(**model_config_kwargs)
+        model = GPT(model_config)
+        model.to(device)
+        model.init_weights()
+        
+        # Apply quantization to get the right structure
+        from torch.ao.quantization import quantize_dynamic
+        model = quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+        
+        # Now load the pre-quantized weights
+        model.load_state_dict(model_data, strict=True)
+        del model_data
+        
+        if phase == "eval":
+            model.eval()
+        else:
+            model.train()
+        
+        tokenizer = get_tokenizer()
+        assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"]
+        return model, tokenizer, meta_data
+    
+    # Regular (non-quantized) model loading
     if device.type == "cpu" or use_quantization:
         # Convert bfloat16 tensors to float32 for CPU inference (required for quantization)
+        # Note: quantized models may have non-tensor values (e.g., dtype objects), so check first
         model_data = {
-            k: v.float() if v.dtype == torch.bfloat16 else v
+            k: v.float() if isinstance(v, torch.Tensor) and v.dtype == torch.bfloat16 else v
             for k, v in model_data.items()
         }
     elif device.type == "mps":
@@ -150,7 +204,7 @@ def build_model(checkpoint_dir, step, device, phase, quantize=None):
         log0("MPS detected: Converting model to float16 (smallest supported type on MPS)")
         try:
             model_data = {
-                k: v.half().to(device) if v.dtype == torch.bfloat16 else v.to(device)
+                k: (v.half().to(device) if v.dtype == torch.bfloat16 else v.to(device)) if isinstance(v, torch.Tensor) else v
                 for k, v in model_data.items()
             }
         except RuntimeError as e:
@@ -258,7 +312,7 @@ def load_model(source, device, phase, model_tag=None, step=None, quantize=None):
     Load a model from the standard nanochat checkpoint directories.
     
     Args:
-        source: One of "base", "mid", "sft", "rl"
+        source: One of "base", "mid", "sft", "sft_int8", "rl"
         device: Target device (cpu, cuda, mps)
         phase: "train" or "eval"
         model_tag: Optional model tag (e.g., "d34"), auto-detected if None
@@ -270,6 +324,7 @@ def load_model(source, device, phase, model_tag=None, step=None, quantize=None):
         "base": "base_checkpoints",
         "mid": "mid_checkpoints",
         "sft": "chatsft_checkpoints",
+        "sft_int8": "chatsft_checkpoints_int8",  # Pre-quantized int8 SFT model
         "rl": "chatrl_checkpoints",
     }[source]
     base_dir = get_base_dir()
