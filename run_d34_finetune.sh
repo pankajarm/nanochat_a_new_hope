@@ -162,15 +162,16 @@ echo "⏭️  Skipping base pretraining (using pre-trained model from HuggingFac
 
 # -----------------------------------------------------------------------------
 # Midtrain
-# NOTE: ensure that we use the same device_batch_size here as the base training script.
+# NOTE: device_batch_size=8 for A100-80GB (original d34 used 4 for H100, but A100-80GB has headroom)
+# Batch size math: 8 × 2048 × 8 GPUs = 131,072 tokens/step → 524,288 / 131,072 = 4 grad accum steps ✓
 echo "Starting mid-training..."
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --device_batch_size=4 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --device_batch_size=8 --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
 
 # -----------------------------------------------------------------------------
 # SFT (Supervised Fine-Tuning)
 echo "Starting SFT..."
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --device_batch_size=4 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --device_batch_size=8 --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
 # -----------------------------------------------------------------------------
