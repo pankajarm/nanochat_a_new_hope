@@ -63,11 +63,21 @@ def build_model(checkpoint_dir, step, device, phase):
     - meta data saved during base model training
     """
     assert phase in ["train", "eval"], f"Invalid phase: {phase}"
-    model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
-    if device.type in {"cpu", "mps"}:
-        # Convert bfloat16 tensors to float for CPU inference
+    # For MPS, load to CPU first to avoid memory fragmentation, then convert and move
+    load_device = "cpu" if device.type == "mps" else device
+    model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, load_device, load_optimizer=False)
+    if device.type == "cpu":
+        # Convert bfloat16 tensors to float32 for CPU inference
         model_data = {
             k: v.float() if v.dtype == torch.bfloat16 else v
+            for k, v in model_data.items()
+        }
+    elif device.type == "mps":
+        # Convert bfloat16 tensors to float16 for MPS (saves memory vs float32)
+        # MPS doesn't support bfloat16 but does support float16
+        # Convert on CPU first, then move to MPS to avoid memory issues
+        model_data = {
+            k: v.half().to(device) if v.dtype == torch.bfloat16 else v.to(device)
             for k, v in model_data.items()
         }
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
@@ -81,6 +91,8 @@ def build_model(checkpoint_dir, step, device, phase):
     model.to_empty(device=device)
     model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
     model.load_state_dict(model_data, strict=True, assign=True)
+    # Free the model_data dict to reclaim memory
+    del model_data
     # Put the model in the right training phase / mode
     if phase == "eval":
         model.eval()
