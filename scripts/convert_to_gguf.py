@@ -187,20 +187,30 @@ def write_nanochat_gguf(
     
     # Token embeddings
     # NanoChat HF: model.embed_tokens.weight -> GGUF: token_embd.weight
+    # CRITICAL FIX: HF stores embeddings as [vocab_size, hidden_size]
+    # GGUF/llama.cpp expects [hidden_size, vocab_size] for ggml_get_rows
+    # So we must TRANSPOSE the embedding matrix!
     emb_key = "model.embed_tokens.weight"
     if emb_key in state_dict:
-        data = tensor_to_numpy(state_dict[emb_key], dtype)
+        emb = state_dict[emb_key]
+        print(f"  token_embd.weight HF shape: {emb.shape}")
+        emb_t = emb.T  # Transpose: [vocab_size, hidden_size] -> [hidden_size, vocab_size]
+        data = tensor_to_numpy(emb_t, dtype)
         gguf_writer.add_tensor("token_embd.weight", data)
-        print(f"  ✓ token_embd.weight {data.shape}")
+        print(f"  ✓ token_embd.weight GGUF shape (transposed): {data.shape}")
         tensors_written += 1
     
     # Output head (lm_head)
     # NanoChat HF: lm_head.weight -> GGUF: output.weight
+    # CRITICAL FIX: Same transpose needed - HF [vocab_size, hidden_size] -> GGUF [hidden_size, vocab_size]
     lm_head_key = "lm_head.weight"
     if lm_head_key in state_dict:
-        data = tensor_to_numpy(state_dict[lm_head_key], dtype)
+        lm_head = state_dict[lm_head_key]
+        print(f"  output.weight HF shape: {lm_head.shape}")
+        lm_head_t = lm_head.T  # Transpose
+        data = tensor_to_numpy(lm_head_t, dtype)
         gguf_writer.add_tensor("output.weight", data)
-        print(f"  ✓ output.weight {data.shape}")
+        print(f"  ✓ output.weight GGUF shape (transposed): {data.shape}")
         tensors_written += 1
     
     # Final norm
