@@ -206,13 +206,20 @@ def convert_nanochat_to_gguf(input_dir: str, output_file: str, dtype: str = "f16
     def to_numpy(tensor):
         if tensor.dtype == torch.bfloat16:
             tensor = tensor.to(torch.float32)
-        return tensor.to(torch.float16 if dtype != "f32" else torch.float32).numpy()
+        tensor = tensor.to(torch.float16 if dtype != "f32" else torch.float32)
+        # Ensure contiguous memory layout (important for transposed tensors)
+        if not tensor.is_contiguous():
+            tensor = tensor.contiguous()
+        return tensor.numpy()
     
     def to_numpy_f32(tensor):
         """Always convert to f32 - used for norm weights that need to match compute precision."""
         if tensor.dtype == torch.bfloat16:
             tensor = tensor.to(torch.float32)
-        return tensor.to(torch.float32).numpy()
+        tensor = tensor.to(torch.float32)
+        if not tensor.is_contiguous():
+            tensor = tensor.contiguous()
+        return tensor.numpy()
     
     # Create GGUF writer with specified architecture
     writer = GGUFWriter(str(output_path), arch=arch)
@@ -338,25 +345,20 @@ def convert_nanochat_to_gguf(input_dir: str, output_file: str, dtype: str = "f16
     
     # Token embeddings
     # NOTE: HF stores embeddings as [vocab_size, hidden_size]
-    # GGUF/llama.cpp expects [hidden_size, vocab_size] for ggml_get_rows
-    # So we need to transpose!
+    # GGUF stores in same layout - no transpose needed (official converter doesn't transpose)
     if "model.embed_tokens.weight" in state_dict:
         emb = state_dict["model.embed_tokens.weight"]
-        print(f"token_embd.weight HF shape: {emb.shape}")
-        emb_t = emb.T  # Transpose to [hidden_size, vocab_size]
-        print(f"token_embd.weight GGUF shape (transposed): {emb_t.shape}")
-        writer.add_tensor("token_embd.weight", to_numpy(emb_t))
+        print(f"token_embd.weight shape: {emb.shape}")
+        writer.add_tensor("token_embd.weight", to_numpy(emb))
     else:
         raise ValueError("Missing model.embed_tokens.weight!")
     
     # Output head (lm_head)
-    # Same transpose needed - HF [vocab_size, hidden_size] -> GGUF [hidden_size, vocab_size]
+    # Same as embeddings - no transpose needed
     if "lm_head.weight" in state_dict:
         lm_head = state_dict["lm_head.weight"]
-        print(f"output.weight HF shape: {lm_head.shape}")
-        lm_head_t = lm_head.T  # Transpose
-        print(f"output.weight GGUF shape (transposed): {lm_head_t.shape}")
-        writer.add_tensor("output.weight", to_numpy(lm_head_t))
+        print(f"output.weight shape: {lm_head.shape}")
+        writer.add_tensor("output.weight", to_numpy(lm_head))
     else:
         raise ValueError("Missing lm_head.weight!")
     
